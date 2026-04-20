@@ -1,0 +1,27 @@
+[versions]
+kotlin = "2.0.20"
+agp = "8.2.0"
+compose = "1.7.1"
+serialization = "1.7.3"
+coroutines = "1.9.0"
+datetime = "0.6.1"
+activityCompose = "1.9.2"
+coreKtx = "1.13.1"
+lifecycle = "2.8.4"
+
+[plugins]
+kotlinMultiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
+androidApplication  = { id = "com.android.application",           version.ref = "agp" }
+androidLibrary      = { id = "com.android.library",               version.ref = "agp" }
+jetbrainsCompose    = { id = "org.jetbrains.compose",             version.ref = "compose" }
+kotlinSerialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
+kotlinComposeCompiler = { id = "org.jetbrains.kotlin.plugin.compose",     version.ref = "kotlin" }
+
+[libraries]
+kotlinxSerializationJson = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "serialization" }
+kotlinxDatetime          = { module = "org.jetbrains.kotlinx:kotlinx-datetime",          version.ref = "datetime" }
+kotlinxCoroutinesCore    = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core",   version.ref = "coroutines" }
+androidxActivityCompose  = { module = "androidx.activity:activity-compose",               version.ref = "activityCompose" }
+androidxCoreKtx          = { module = "androidx.core:core-ktx",                           version.ref = "coreKtx" }
+androidxLifecycleViewmodelCompose = { module = "androidx.lifecycle:lifecycle-viewmodel-compose", version.ref = "lifecycle" }
+
