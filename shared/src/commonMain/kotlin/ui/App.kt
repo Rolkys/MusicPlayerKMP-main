@@ -21,6 +21,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -60,7 +61,8 @@ private enum class Screen {
 @Composable
 fun App(
     controller: MusicController,
-    onPickLocalFile: () -> Unit
+    onPickLocalFile: () -> Unit,
+    onPickMusicFolder: () -> Unit = {}
 ) {
     val libraryState by controller.libraryState.collectAsStateSafe()
     val playerState by controller.playerState.collectAsStateSafe()
@@ -72,7 +74,7 @@ fun App(
     var screen by remember { mutableStateOf(Screen.HOME) }
 
     LaunchedEffect(Unit) {
-        controller.refreshLocal()
+        controller.loadSavedFolders()
     }
 
     SpotifyTheme {
@@ -123,6 +125,7 @@ fun App(
                                 remoteUrl = remoteUrl,
                                 albumName = albumName,
                                 tracks = libraryState.allTracks,
+                                musicFolders = libraryState.musicFolders,
                                 onLocalPathChange = { localPath = it },
                                 onRemoteUrlChange = { remoteUrl = it },
                                 onAlbumNameChange = { albumName = it },
@@ -131,13 +134,16 @@ fun App(
                                     localPath = ""
                                 },
                                 onPickLocalFile = onPickLocalFile,
+                                onPickMusicFolder = onPickMusicFolder,
                                 onAddRemote = {
                                     controller.addRemoteUrl(remoteUrl)
                                     remoteUrl = ""
                                 },
                                 onCreateAlbum = { controller.createAlbum(albumName) },
                                 onPlay = controller::play,
-                                onAddToAlbum = { track -> controller.addTrackToAlbum(track, albumName) }
+                                onAddToAlbum = { track -> controller.addTrackToAlbum(track, albumName) },
+                                onRemoveFolder = { folder -> controller.removeMusicFolder(folder) },
+                                onRefreshFolders = { controller.refreshLocal() }
                             )
                             Screen.ALBUMS -> AlbumsScreen(
                                 albums = libraryState.albums,
@@ -382,20 +388,78 @@ private fun LibraryScreen(
     remoteUrl: String,
     albumName: String,
     tracks: List<Track>,
+    musicFolders: List<String>,
     onLocalPathChange: (String) -> Unit,
     onRemoteUrlChange: (String) -> Unit,
     onAlbumNameChange: (String) -> Unit,
     onAddLocal: () -> Unit,
     onPickLocalFile: () -> Unit,
+    onPickMusicFolder: () -> Unit,
     onAddRemote: () -> Unit,
     onCreateAlbum: () -> Unit,
     onPlay: (Track) -> Unit,
-    onAddToAlbum: (Track) -> Unit
+    onAddToAlbum: (Track) -> Unit,
+    onRemoveFolder: (String) -> Unit,
+    onRefreshFolders: () -> Unit
 ) {
     Text("Biblioteca", color = Color.White, fontWeight = FontWeight.SemiBold)
     Spacer(modifier = Modifier.height(8.dp))
 
-    SectionTitle("Local")
+    // Sección de Carpetas de Música
+    SectionTitle("Tus carpetas de música")
+    Spacer(modifier = Modifier.height(8.dp))
+    
+    Button(
+        onClick = onPickMusicFolder,
+        modifier = Modifier.fillMaxWidth(),
+        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1ED760))
+    ) {
+        Text("+ Añadir carpeta de música", color = Color.Black, fontWeight = FontWeight.Medium)
+    }
+    
+    Spacer(modifier = Modifier.height(8.dp))
+    
+    if (musicFolders.isEmpty()) {
+        Text(
+            "No has añadido carpetas. Pulsa el botón arriba para añadir tu música.",
+            color = Color(0xFF8EA0B5),
+            style = MaterialTheme.typography.bodySmall
+        )
+    } else {
+        Text(
+            "${tracks.size} canciones en ${musicFolders.size} carpetas",
+            color = Color(0xFF8EA0B5),
+            style = MaterialTheme.typography.bodySmall
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        
+        LazyColumn(
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+            modifier = Modifier.heightIn(max = 150.dp)
+        ) {
+            items(musicFolders, key = { it }) { folder ->
+                FolderRow(
+                    folderPath = folder,
+                    onRemove = { onRemoveFolder(folder) }
+                )
+            }
+        }
+        
+        Spacer(modifier = Modifier.height(8.dp))
+        
+        Button(
+            onClick = onRefreshFolders,
+            modifier = Modifier.fillMaxWidth(),
+            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF151C25))
+        ) {
+            Text("🔄 Refrescar carpetas", color = Color(0xFFCAD6E2))
+        }
+    }
+
+    HorizontalDivider(color = Color(0xFF1E2630), modifier = Modifier.padding(vertical = 16.dp))
+
+    SectionTitle("Agregar archivo individual")
+    Spacer(modifier = Modifier.height(8.dp))
     OutlinedTextField(
         value = localPath,
         onValueChange = onLocalPathChange,
@@ -442,6 +506,35 @@ private fun LibraryScreen(
         onPlay = onPlay,
         onAddToAlbum = onAddToAlbum
     )
+}
+
+@Composable
+private fun FolderRow(
+    folderPath: String,
+    onRemove: () -> Unit
+) {
+    Card(
+        colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = Color(0xFF151C25)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                text = folderPath.substringAfterLast('/').substringAfterLast('\\').takeIf { it.isNotBlank() } ?: folderPath,
+                color = Color(0xFFCAD6E2),
+                maxLines = 1,
+                modifier = Modifier.weight(1f)
+            )
+            IconButton(onClick = onRemove) {
+                Text("✕", color = Color(0xFFE81123))
+            }
+        }
+    }
 }
 
 @Composable

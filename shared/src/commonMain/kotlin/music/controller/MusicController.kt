@@ -31,7 +31,8 @@ data class LibraryUiState(
     val selectedAlbum: String? = null,
     val selectedPlaylist: String? = null,
     val playCounts: Map<String, Int> = emptyMap(),
-    val message: String? = null
+    val message: String? = null,
+    val musicFolders: List<String> = emptyList() // Carpetas de música personalizadas
 ) {
     val allTracks: List<Track>
         get() = remoteTracks + localTracks + savedTracks
@@ -92,9 +93,12 @@ class MusicController(
             runCatching {
                 localMusicSource.scan(pathHint).sortedBy { it.title.lowercase() }
             }.onSuccess { tracks ->
+                // Actualizar carpetas guardadas en el estado
+                val folders = localMusicSource.getCustomFolders()
                 _libraryState.value = _libraryState.value.copy(
                     isLoading = false,
                     localTracks = tracks,
+                    musicFolders = folders,
                     message = "Local: ${tracks.size} pistas"
                 )
             }.onFailure { error ->
@@ -102,6 +106,86 @@ class MusicController(
                     isLoading = false,
                     message = error.message ?: "Error al escanear local"
                 )
+            }
+        }
+    }
+    
+    /**
+     * Agregar una carpeta de música y escanear su contenido
+     */
+    fun addMusicFolder(folderPath: String) {
+        localMusicSource.addCustomFolder(folderPath)
+        
+        // Escanear la carpeta recién agregada
+        scope.launch {
+            _libraryState.value = _libraryState.value.copy(isLoading = true, message = null)
+            
+            runCatching {
+                val folders = localMusicSource.getCustomFolders()
+                val newTracks = localMusicSource.scanCustomFolders(listOf(folderPath))
+                val existingTracks = _libraryState.value.localTracks
+                
+                // Combinar tracks existentes con nuevos (sin duplicados)
+                val combinedTracks = (existingTracks + newTracks)
+                    .distinctBy { it.id }
+                    .sortedBy { it.title.lowercase() }
+                
+                _libraryState.value = _libraryState.value.copy(
+                    isLoading = false,
+                    localTracks = combinedTracks,
+                    musicFolders = folders,
+                    message = "Carpeta agregada: ${newTracks.size} canciones nuevas"
+                )
+            }.onFailure { error ->
+                _libraryState.value = _libraryState.value.copy(
+                    isLoading = false,
+                    message = "Error al agregar carpeta: ${error.message}"
+                )
+            }
+        }
+    }
+    
+    /**
+     * Eliminar una carpeta de música
+     */
+    fun removeMusicFolder(folderPath: String) {
+        localMusicSource.removeCustomFolder(folderPath)
+        
+        // Recargar todas las canciones (sin la carpeta eliminada)
+        refreshLocal()
+    }
+    
+    /**
+     * Obtener lista de carpetas de música guardadas
+     */
+    fun getMusicFolders(): List<String> {
+        return localMusicSource.getCustomFolders()
+    }
+    
+    /**
+     * Cargar carpetas guardadas al iniciar
+     */
+    fun loadSavedFolders() {
+        val folders = localMusicSource.getCustomFolders()
+        if (folders.isNotEmpty()) {
+            _libraryState.value = _libraryState.value.copy(musicFolders = folders)
+            // Escanear todas las carpetas guardadas
+            scope.launch {
+                _libraryState.value = _libraryState.value.copy(isLoading = true)
+                
+                runCatching {
+                    val tracks = localMusicSource.scanCustomFolders(folders)
+                    _libraryState.value = _libraryState.value.copy(
+                        isLoading = false,
+                        localTracks = tracks,
+                        message = "Cargadas ${tracks.size} canciones de ${folders.size} carpetas"
+                    )
+                }.onFailure { error ->
+                    _libraryState.value = _libraryState.value.copy(
+                        isLoading = false,
+                        message = "Error al cargar carpetas: ${error.message}"
+                    )
+                }
             }
         }
     }
