@@ -1,10 +1,13 @@
 ﻿package music.player
 
 import java.util.concurrent.atomic.AtomicBoolean
+import javafx.animation.KeyFrame
+import javafx.animation.Timeline
 import javafx.application.Platform
 import javafx.embed.swing.JFXPanel
 import javafx.scene.media.Media
 import javafx.scene.media.MediaPlayer
+import javafx.util.Duration
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -20,6 +23,7 @@ class DesktopAudioPlayer : AudioPlayer {
 
     private var player: MediaPlayer? = null
     private var currentTrack: Track? = null
+    private var progressTimeline: Timeline? = null
 
     override suspend fun play(track: Track) {
         runOnFxThread {
@@ -33,20 +37,29 @@ class DesktopAudioPlayer : AudioPlayer {
                 val mediaPlayer = MediaPlayer(media)
 
                 mediaPlayer.setOnReady {
+                    val duration = mediaPlayer.totalDuration?.toMillis()?.toLong() ?: 0
                     mediaPlayer.play()
-                    _state.value = PlayerState(currentTrack = track, isPlaying = true)
+                    _state.value = PlayerState(
+                        currentTrack = track, 
+                        isPlaying = true,
+                        durationMs = duration
+                    )
+                    startProgressTimer(mediaPlayer, track)
                 }
 
                 mediaPlayer.setOnPlaying {
-                    _state.value = PlayerState(currentTrack = track, isPlaying = true)
+                    val duration = mediaPlayer.totalDuration?.toMillis()?.toLong() ?: _state.value.durationMs
+                    _state.value = _state.value.copy(isPlaying = true, durationMs = duration)
                 }
 
                 mediaPlayer.setOnPaused {
-                    _state.value = PlayerState(currentTrack = track, isPlaying = false)
+                    _state.value = _state.value.copy(isPlaying = false)
+                    stopProgressTimer()
                 }
 
                 mediaPlayer.setOnEndOfMedia {
-                    _state.value = PlayerState(currentTrack = track, isPlaying = false)
+                    _state.value = _state.value.copy(isPlaying = false, currentPositionMs = _state.value.durationMs)
+                    stopProgressTimer()
                 }
 
                 mediaPlayer.setOnError {
@@ -121,7 +134,34 @@ class DesktopAudioPlayer : AudioPlayer {
         }
     }
 
+    private fun startProgressTimer(mediaPlayer: MediaPlayer, track: Track) {
+        stopProgressTimer()
+        
+        val timeline = Timeline(
+            KeyFrame(Duration.millis(500.0), {
+                val currentMillis = mediaPlayer.currentTime?.toMillis()?.toLong() ?: 0
+                val totalMillis = mediaPlayer.totalDuration?.toMillis()?.toLong() ?: track.durationMs ?: 0
+                val progress = if (totalMillis > 0) currentMillis.toFloat() / totalMillis.toFloat() else 0f
+                
+                _state.value = _state.value.copy(
+                    currentPositionMs = currentMillis,
+                    durationMs = totalMillis,
+                    progress = progress
+                )
+            })
+        )
+        timeline.cycleCount = Timeline.INDEFINITE
+        timeline.play()
+        progressTimeline = timeline
+    }
+    
+    private fun stopProgressTimer() {
+        progressTimeline?.stop()
+        progressTimeline = null
+    }
+
     private fun releasePlayer() {
+        stopProgressTimer()
         player?.stop()
         player?.dispose()
         player = null

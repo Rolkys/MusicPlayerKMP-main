@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -171,6 +172,9 @@ fun App(
                         onToggle = {
                             if (playerState.isPlaying) controller.pause() else controller.resume()
                         },
+                        onPrevious = { controller.previous() },
+                        onNext = { controller.next() },
+                        onSeek = { position -> controller.seekTo(position) },
                         modifier = Modifier.align(Alignment.BottomStart)
                     )
                 }
@@ -641,13 +645,28 @@ private fun TrackRow(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Column(modifier = Modifier.padding(end = 12.dp)) {
-                Text(track.title, color = Color.White, fontWeight = FontWeight.Medium)
-                Text(track.artist, color = Color(0xFF8EA0B5))
-                Text(
-                    if (track.origin == TrackOrigin.REMOTE) "Remoto" else "Local",
-                    color = Color(0xFF6F7C8A)
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.weight(1f)
+            ) {
+                // Carátula de la canción
+                ui.components.AlbumCover(
+                    imageUrl = track.coverUrl,
+                    size = 48.dp,
+                    cornerRadius = 4.dp
                 )
+                
+                Spacer(modifier = Modifier.width(12.dp))
+                
+                Column {
+                    Text(track.title, color = Color.White, fontWeight = FontWeight.Medium, maxLines = 1)
+                    Text(track.artist, color = Color(0xFF8EA0B5), maxLines = 1)
+                    Text(
+                        if (track.origin == TrackOrigin.REMOTE) "Remoto" else "Local",
+                        color = Color(0xFF6F7C8A),
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (onSaveToLibrary != null) {
@@ -743,28 +762,135 @@ private fun AlbumRow(
 private fun BottomBar(
     playerState: music.model.PlayerState,
     onToggle: () -> Unit,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit,
+    onSeek: (Float) -> Unit,
     modifier: Modifier
 ) {
-    Row(
+    val now = playerState.currentTrack
+    
+    Column(
         modifier = modifier
             .fillMaxWidth()
-            .height(BottomBarHeight)
+            .height(BottomBarHeight + 20.dp)
             .background(Color(0xFF0B1016))
-            .padding(horizontal = 20.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween
+            .padding(horizontal = 16.dp, vertical = 8.dp)
     ) {
-        val now = playerState.currentTrack
-        Column {
-            Text(now?.title ?: "Sin reproduccion", color = Color.White, fontWeight = FontWeight.SemiBold)
-            Text(now?.artist ?: "", color = Color(0xFF7E8FA3))
+        // Barra de progreso con tiempos
+        if (now != null) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    text = playerState.formattedCurrentTime,
+                    color = Color(0xFF8EA0B5),
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.width(40.dp)
+                )
+                
+                // Seek bar
+                androidx.compose.material3.Slider(
+                    value = playerState.progressPercent.coerceIn(0f, 1f),
+                    onValueChange = onSeek,
+                    modifier = Modifier.weight(1f),
+                    colors = androidx.compose.material3.SliderDefaults.colors(
+                        thumbColor = Color.White,
+                        activeTrackColor = Color(0xFF1ED760),
+                        inactiveTrackColor = Color(0xFF3E3E3E)
+                    )
+                )
+                
+                Text(
+                    text = playerState.formattedTotalTime,
+                    color = Color(0xFF8EA0B5),
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.width(40.dp)
+                )
+            }
+            Spacer(modifier = Modifier.height(8.dp))
         }
-        Button(
-            onClick = onToggle,
-            enabled = now != null,
-            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1ED760))
+        
+        // Fila principal con carátula, info y controles
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Text(if (playerState.isPlaying) "Pausa" else "Play")
+            // Carátula e info de la canción
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.weight(1f)
+            ) {
+                // Carátula
+                ui.components.AlbumCover(
+                    imageUrl = now?.coverUrl,
+                    size = 56.dp,
+                    cornerRadius = 4.dp
+                )
+                
+                Spacer(modifier = Modifier.width(12.dp))
+                
+                // Info de la canción
+                Column {
+                    Text(
+                        text = now?.title ?: "Sin reproducción",
+                        color = Color.White,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1
+                    )
+                    Text(
+                        text = now?.artist ?: "",
+                        color = Color(0xFF7E8FA3),
+                        maxLines = 1
+                    )
+                }
+            }
+            
+            // Controles de reproducción
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                // Botón Anterior
+                IconButton(
+                    onClick = onPrevious,
+                    enabled = now != null
+                ) {
+                    Text(
+                        text = "⏮",
+                        style = MaterialTheme.typography.titleLarge,
+                        color = if (now != null) Color.White else Color(0xFF5E5E5E)
+                    )
+                }
+                
+                // Botón Play/Pausa (más grande y destacado)
+                androidx.compose.material3.FloatingActionButton(
+                    onClick = onToggle,
+                    enabled = now != null,
+                    containerColor = Color.White,
+                    contentColor = Color.Black,
+                    modifier = Modifier.size(56.dp)
+                ) {
+                    Text(
+                        text = if (playerState.isPlaying) "⏸" else "▶",
+                        style = MaterialTheme.typography.headlineSmall
+                    )
+                }
+                
+                // Botón Siguiente
+                IconButton(
+                    onClick = onNext,
+                    enabled = now != null
+                ) {
+                    Text(
+                        text = "⏭",
+                        style = MaterialTheme.typography.titleLarge,
+                        color = if (now != null) Color.White else Color(0xFF5E5E5E)
+                    )
+                }
+            }
         }
     }
 }

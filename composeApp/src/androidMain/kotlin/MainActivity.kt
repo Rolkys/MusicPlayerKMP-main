@@ -14,6 +14,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import music.controller.MusicController
+import music.platform.AndroidSettingsStorage
 import music.platform.createPlatformFactory
 import music.spotify.initSpotifyContext
 import ui.App
@@ -24,6 +25,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        
+        // Inicializar settings storage
+        AndroidSettingsStorage.init(applicationContext)
 
         initSpotifyContext(applicationContext)
 
@@ -36,6 +40,7 @@ class MainActivity : ComponentActivity() {
 
         requestAudioPermissionIfNeeded()
 
+        // Launcher para seleccionar archivos individuales
         val pickLocalAudio = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
             if (uri != null) {
                 contentResolver.takePersistableUriPermission(
@@ -45,9 +50,26 @@ class MainActivity : ComponentActivity() {
                 controller.addLocalFile(uri.toString())
             }
         }
+        
+        // Launcher para seleccionar carpetas de música
+        val pickMusicFolder = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+            if (uri != null) {
+                // Tomar permiso persistente para acceder a esta carpeta
+                contentResolver.takePersistableUriPermission(
+                    uri,
+                    android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+                // Agregar la carpeta al controlador
+                controller.addMusicFolder(uri.toString())
+            }
+        }
 
         setContent {
-            App(controller, onPickLocalFile = { pickLocalAudio.launch(arrayOf("audio/*")) })
+            App(
+                controller = controller,
+                onPickLocalFile = { pickLocalAudio.launch(arrayOf("audio/*")) },
+                onPickMusicFolder = { pickMusicFolder.launch(null) }
+            )
         }
     }
 

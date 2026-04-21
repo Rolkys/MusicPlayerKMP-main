@@ -1,15 +1,9 @@
 package music.platform
 
-import android.app.Activity
 import android.content.Context
-import android.content.Intent
 import android.net.Uri
-import android.os.Build
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.ComponentActivity
-import kotlinx.coroutines.suspendCancellableCoroutine
-import java.io.File
-import kotlin.coroutines.resume
 
 /**
  * Implementación Android para seleccionar carpeta.
@@ -71,7 +65,9 @@ class AndroidFolderPicker private constructor() {
  * Implementación Android de SettingsStorage usando SharedPreferences
  */
 actual fun createSettingsStorage(): SettingsStorage {
-    return AndroidSettingsStorage(AndroidSettingsStorage.context)
+    val ctx = AndroidSettingsStorage.context 
+        ?: throw IllegalStateException("AndroidSettingsStorage not initialized. Call AndroidSettingsStorage.init(context) first.")
+    return AndroidSettingsStorage(ctx)
 }
 
 class AndroidSettingsStorage private constructor(context: Context) : SettingsStorage {

@@ -10,6 +10,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import music.controller.MusicController
 import music.platform.createPlatformFactory
+import music.platform.pickMusicFolder
 import ui.App
 import java.awt.FileDialog
 import java.awt.Frame
@@ -41,12 +42,23 @@ fun main() = application {
             controller.addLocalFile(dir + file)
         }
     }
+    
+    val pickMusicFolder = {
+        val folder = pickMusicFolder()
+        if (folder != null) {
+            controller.addMusicFolder(folder)
+        }
+    }
 
     Window(
         onCloseRequest = ::exitApplication,
-        title = "MusicPlayerKMP",
+        title = "MusicPlayerKMP - Sin anuncios",
         state = rememberWindowState(width = 1100.dp, height = 760.dp)
     ) {
-        App(controller, onPickLocalFile = pickLocalFile)
+        App(
+            controller = controller,
+            onPickLocalFile = pickLocalFile,
+            onPickMusicFolder = pickMusicFolder
+        )
     }
 }

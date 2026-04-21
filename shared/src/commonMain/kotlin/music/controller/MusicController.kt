@@ -66,10 +66,20 @@ class MusicController(
     val playerState: StateFlow<PlayerState> = audioPlayer.state
 
     private var deezerClient: DeezerClient? = null
+    
+    // Cola de reproducción para navegación previous/next
+    private var playbackQueue: List<Track> = emptyList()
+    private var currentQueueIndex: Int = -1
+    private var isShuffleOn: Boolean = false
+    private var repeatMode: RepeatMode = RepeatMode.OFF
 
     init {
         // Inicializar cliente Deezer (no requiere credenciales)
         deezerClient = DeezerClient(createSpotifyHttpClient())
+    }
+    
+    enum class RepeatMode {
+        OFF, ALL, ONE
     }
 
     // Deezer no requiere configuración de credenciales.
@@ -530,11 +540,95 @@ class MusicController(
         _libraryState.value = _libraryState.value.copy(selectedAlbum = name)
     }
 
-    fun play(track: Track) {
+    fun play(track: Track, queue: List<Track>? = null) {
+        // Si se proporciona una cola, usarla. Si no, usar todas las tracks disponibles
+        playbackQueue = queue ?: _libraryState.value.allTracks
+        currentQueueIndex = playbackQueue.indexOfFirst { it.id == track.id }.coerceAtLeast(0)
+        
         incrementPlayCount(track)
         scope.launch {
             audioPlayer.play(track)
         }
+        updatePlaybackState()
+    }
+    
+    fun playFromQueue(index: Int) {
+        if (index in playbackQueue.indices) {
+            currentQueueIndex = index
+            val track = playbackQueue[index]
+            incrementPlayCount(track)
+            scope.launch {
+                audioPlayer.play(track)
+            }
+            updatePlaybackState()
+        }
+    }
+    
+    fun previous() {
+        if (playbackQueue.isEmpty()) return
+        
+        val newIndex = when {
+            currentQueueIndex > 0 -> currentQueueIndex - 1
+            repeatMode == RepeatMode.ALL -> playbackQueue.size - 1
+            else -> return // No hay anterior
+        }
+        
+        playFromQueue(newIndex)
+    }
+    
+    fun next() {
+        if (playbackQueue.isEmpty()) return
+        
+        val newIndex = when {
+            currentQueueIndex < playbackQueue.size - 1 -> currentQueueIndex + 1
+            repeatMode == RepeatMode.ALL -> 0
+            else -> return // No hay siguiente
+        }
+        
+        playFromQueue(newIndex)
+    }
+    
+    fun seekTo(position: Float) {
+        audioPlayer.seekTo(position.coerceIn(0f, 1f))
+    }
+    
+    fun toggleShuffle() {
+        isShuffleOn = !isShuffleOn
+        if (isShuffleOn && playbackQueue.isNotEmpty()) {
+            // Barajar la cola manteniendo la canción actual en primera posición
+            val currentTrack = playbackQueue.getOrNull(currentQueueIndex)
+            val shuffled = playbackQueue.shuffled().toMutableList()
+            if (currentTrack != null) {
+                shuffled.remove(currentTrack)
+                shuffled.add(0, currentTrack)
+                currentQueueIndex = 0
+            }
+            playbackQueue = shuffled
+        } else {
+            // Restaurar orden original (usar todas las tracks)
+            playbackQueue = _libraryState.value.allTracks
+            val currentTrack = playerState.value.currentTrack
+            currentQueueIndex = playbackQueue.indexOfFirst { it.id == currentTrack?.id }.coerceAtLeast(0)
+        }
+        updatePlaybackState()
+    }
+    
+    fun toggleRepeat() {
+        repeatMode = when (repeatMode) {
+            RepeatMode.OFF -> RepeatMode.ALL
+            RepeatMode.ALL -> RepeatMode.ONE
+            RepeatMode.ONE -> RepeatMode.OFF
+        }
+        updatePlaybackState()
+    }
+    
+    private fun updatePlaybackState() {
+        // Actualizar hasPrevious y hasNext en el estado del player
+        val hasPrev = currentQueueIndex > 0 || repeatMode == RepeatMode.ALL
+        val hasNext = currentQueueIndex < playbackQueue.size - 1 || repeatMode == RepeatMode.ALL || repeatMode == RepeatMode.ONE
+        
+        // Nota: esto se manejaría mejor con un estado dedicado en PlayerState
+        // Por ahora solo actualizamos la lógica interna
     }
 
     fun pause() {

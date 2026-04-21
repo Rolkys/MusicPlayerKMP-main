@@ -4,6 +4,8 @@ import android.content.Context
 import android.media.AudioAttributes
 import android.media.MediaPlayer
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -18,6 +20,8 @@ class AndroidAudioPlayer(
 
     private var mediaPlayer: MediaPlayer? = null
     private var currentTrack: Track? = null
+    private val progressHandler = Handler(Looper.getMainLooper())
+    private var progressRunnable: Runnable? = null
 
     override suspend fun play(track: Track) {
         releasePlayer()
@@ -35,13 +39,20 @@ class AndroidAudioPlayer(
                 .build()
         )
 
-        player.setOnPreparedListener {
-            it.start()
-            _state.value = PlayerState(currentTrack = track, isPlaying = true)
+        player.setOnPreparedListener { mp ->
+            val duration = mp.duration.toLong()
+            mp.start()
+            _state.value = PlayerState(
+                currentTrack = track, 
+                isPlaying = true,
+                durationMs = duration
+            )
+            startProgressTimer(mp)
         }
 
         player.setOnCompletionListener {
-            _state.value = PlayerState(currentTrack = track, isPlaying = false)
+            _state.value = _state.value.copy(isPlaying = false, currentPositionMs = _state.value.durationMs)
+            stopProgressTimer()
         }
 
         player.setOnErrorListener { _, _, _ ->
@@ -71,12 +82,14 @@ class AndroidAudioPlayer(
     override suspend fun pause() {
         mediaPlayer?.takeIf { it.isPlaying }?.pause()
         _state.value = _state.value.copy(isPlaying = false, isBuffering = false)
+        stopProgressTimer()
     }
 
     override suspend fun resume() {
         val player = mediaPlayer ?: return
         runCatching { player.start() }
         _state.value = _state.value.copy(isPlaying = true, isBuffering = false)
+        startProgressTimer(player)
     }
 
     override suspend fun stop() {
@@ -104,7 +117,35 @@ class AndroidAudioPlayer(
         _state.value = PlayerState()
     }
 
+    private fun startProgressTimer(mediaPlayer: MediaPlayer) {
+        stopProgressTimer()
+        
+        val runnable = object : Runnable {
+            override fun run() {
+                if (mediaPlayer.isPlaying) {
+                    val current = mediaPlayer.currentPosition.toLong()
+                    val duration = mediaPlayer.duration.toLong()
+                    val progress = if (duration > 0) current.toFloat() / duration.toFloat() else 0f
+                    
+                    _state.value = _state.value.copy(
+                        currentPositionMs = current,
+                        progress = progress
+                    )
+                    progressHandler.postDelayed(this, 500)
+                }
+            }
+        }
+        progressRunnable = runnable
+        progressHandler.post(runnable)
+    }
+    
+    private fun stopProgressTimer() {
+        progressRunnable?.let { progressHandler.removeCallbacks(it) }
+        progressRunnable = null
+    }
+
     private fun releasePlayer() {
+        stopProgressTimer()
         mediaPlayer?.let { player ->
             runCatching { player.stop() }
             player.release()
