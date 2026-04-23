@@ -1,4 +1,4 @@
-﻿package ui
+package ui
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -46,8 +47,10 @@ import music.controller.LibraryUiState
 import music.controller.MusicController
 import music.model.Album
 import music.model.Playlist
+import music.model.RepeatMode
 import music.model.Track
 import music.model.TrackOrigin
+import music.lyrics.LyricsResult
 
 private val SidebarWidth = 240.dp
 private val BottomBarHeight = 86.dp
@@ -73,10 +76,34 @@ fun App(
     var albumName by remember { mutableStateOf("") }
     var spotifyQuery by remember { mutableStateOf("") }
     var screen by remember { mutableStateOf(Screen.HOME) }
+    var showFullscreenPlayer by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         controller.loadSavedFolders()
     }
+    
+    // Pantalla fullscreen del reproductor
+    if (showFullscreenPlayer) {
+        val currentLyrics by controller.currentLyrics.collectAsState()
+        
+        ui.screens.PlayerFullscreenScreen(
+            playerState = playerState,
+            track = playerState.currentTrack,
+            isPlaying = playerState.isPlaying,
+            onClose = { showFullscreenPlayer = false },
+            onTogglePlay = {
+                if (playerState.isPlaying) controller.pause() else controller.resume()
+            },
+            onPrevious = { controller.previous() },
+            onNext = { controller.next() },
+            onSeek = { position -> controller.seekTo(position) },
+            isFavorite = playerState.currentTrack?.let { libraryState.isFavorite(it) } ?: false,
+            onToggleFavorite = { 
+                playerState.currentTrack?.let { controller.toggleFavorite(it) }
+            },
+            lyrics = currentLyrics
+        )
+    } else {
 
     SpotifyTheme {
         Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
@@ -119,7 +146,9 @@ fun App(
                                 onAddToAlbum = { track -> controller.addTrackToAlbum(track, albumName) },
                                 onSaveToLibrary = controller::saveTrackToLibrary,
                                 onSavePlaylistToLibrary = controller::savePlaylistToLibrary,
-                                onSaveAlbumToLibrary = controller::saveAlbumToLibrary
+                                onSaveAlbumToLibrary = controller::saveAlbumToLibrary,
+                                libraryState = libraryState,
+                                controller = controller
                             )
                             Screen.LIBRARY -> LibraryScreen(
                                 localPath = localPath,
@@ -127,6 +156,7 @@ fun App(
                                 albumName = albumName,
                                 tracks = libraryState.allTracks,
                                 musicFolders = libraryState.musicFolders,
+                                libraryState = libraryState,
                                 onLocalPathChange = { localPath = it },
                                 onRemoteUrlChange = { remoteUrl = it },
                                 onAlbumNameChange = { albumName = it },
@@ -143,6 +173,7 @@ fun App(
                                 onCreateAlbum = { controller.createAlbum(albumName) },
                                 onPlay = controller::play,
                                 onAddToAlbum = { track -> controller.addTrackToAlbum(track, albumName) },
+                                onToggleFavorite = { track -> controller.toggleFavorite(track) },
                                 onRemoveFolder = { folder -> controller.removeMusicFolder(folder) },
                                 onRefreshFolders = { controller.refreshLocal() }
                             )
@@ -154,7 +185,9 @@ fun App(
                                 selectedTracks = if (libraryState.selectedPlaylist != null) libraryState.selectedPlaylistTracks else libraryState.selectedAlbumTracks,
                                 onSelectAlbum = controller::selectAlbum,
                                 onSelectPlaylist = controller::selectPlaylist,
-                                onPlay = controller::play
+                                onPlay = controller::play,
+                                libraryState = libraryState,
+                                controller = controller
                             )
                         }
 
@@ -175,12 +208,14 @@ fun App(
                         onPrevious = { controller.previous() },
                         onNext = { controller.next() },
                         onSeek = { position -> controller.seekTo(position) },
+                        onExpand = { showFullscreenPlayer = true },
                         modifier = Modifier.align(Alignment.BottomStart)
                     )
                 }
             }
         }
     }
+}
 }
 
 @Composable
@@ -318,7 +353,9 @@ private fun SearchScreen(
     onAddToAlbum: (Track) -> Unit,
     onSaveToLibrary: (Track) -> Unit,
     onSavePlaylistToLibrary: (Playlist) -> Unit,
-    onSaveAlbumToLibrary: (Album) -> Unit
+    onSaveAlbumToLibrary: (Album) -> Unit,
+    libraryState: LibraryUiState,
+    controller: MusicController
 ) {
     Text("Buscar Música (Deezer)", color = Color.White, fontWeight = FontWeight.SemiBold)
     Spacer(modifier = Modifier.height(8.dp))
@@ -356,8 +393,10 @@ private fun SearchScreen(
                 TrackRow(
                     track = track,
                     albumName = albumName,
+                    isFavorite = libraryState.isFavorite(track),
                     onPlay = onPlay,
                     onAddToAlbum = { onAddToAlbum(track) },
+                    onToggleFavorite = { controller.toggleFavorite(track) },
                     addLabel = if (albumName.isBlank()) "Album" else "Agregar",
                     extraActionLabel = "Similar",
                     onExtraAction = { onCreateSimilar(track) },
@@ -393,6 +432,7 @@ private fun LibraryScreen(
     albumName: String,
     tracks: List<Track>,
     musicFolders: List<String>,
+    libraryState: LibraryUiState,
     onLocalPathChange: (String) -> Unit,
     onRemoteUrlChange: (String) -> Unit,
     onAlbumNameChange: (String) -> Unit,
@@ -403,6 +443,7 @@ private fun LibraryScreen(
     onCreateAlbum: () -> Unit,
     onPlay: (Track) -> Unit,
     onAddToAlbum: (Track) -> Unit,
+    onToggleFavorite: (Track) -> Unit,
     onRemoveFolder: (String) -> Unit,
     onRefreshFolders: () -> Unit
 ) {
@@ -502,13 +543,72 @@ private fun LibraryScreen(
     Spacer(modifier = Modifier.height(8.dp))
     Button(onClick = onCreateAlbum) { Text("Crear album") }
 
+    // Sección de favoritos
+    val favoriteCount = libraryState.favoriteTracks.size
+    if (favoriteCount > 0) {
+        Spacer(modifier = Modifier.height(18.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            SectionTitle("❤️ Tus favoritos ($favoriteCount)")
+        }
+        
+        // Mostrar solo las primeras 5 favoritas en miniatura
+        LazyRow(
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            modifier = Modifier.heightIn(max = 100.dp)
+        ) {
+            items(libraryState.favoriteTracks.take(5), key = { it.id }) { track ->
+                Card(
+                    colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = Color(0xFF1A2332)),
+                    modifier = Modifier
+                        .width(200.dp)
+                        .clickable { onPlay(track) }
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        ui.components.AlbumCover(
+                            imageUrl = track.coverUrl,
+                            size = 48.dp,
+                            cornerRadius = 4.dp
+                        )
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                track.title,
+                                color = Color.White,
+                                fontWeight = FontWeight.Medium,
+                                maxLines = 1
+                            )
+                            Text(
+                                track.artist,
+                                color = Color(0xFF8EA0B5),
+                                maxLines = 1,
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                        IconButton(onClick = { onToggleFavorite(track) }) {
+                            Text("❤️")
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
     Spacer(modifier = Modifier.height(18.dp))
-    SectionTitle("Todas las pistas")
+    SectionTitle("Todas las pistas (${tracks.size})")
     TrackList(
         tracks = tracks,
         albumName = albumName,
+        isFavorite = { libraryState.isFavorite(it) },
         onPlay = onPlay,
-        onAddToAlbum = onAddToAlbum
+        onAddToAlbum = onAddToAlbum,
+        onToggleFavorite = onToggleFavorite
     )
 }
 
@@ -550,7 +650,9 @@ private fun AlbumsScreen(
     selectedTracks: List<Track>,
     onSelectAlbum: (String?) -> Unit,
     onSelectPlaylist: (String?) -> Unit,
-    onPlay: (Track) -> Unit
+    onPlay: (Track) -> Unit,
+    libraryState: LibraryUiState,
+    controller: MusicController
 ) {
     Text("Albums y Playlists", color = Color.White, fontWeight = FontWeight.SemiBold)
     Spacer(modifier = Modifier.height(8.dp))
@@ -597,7 +699,14 @@ private fun AlbumsScreen(
     val title = selectedAlbum ?: selectedPlaylist ?: "Selecciona un album o playlist"
     SectionTitle(title)
 
-    TrackList(tracks = selectedTracks, albumName = "", onPlay = onPlay, onAddToAlbum = { })
+    TrackList(
+        tracks = selectedTracks,
+        albumName = "",
+        isFavorite = { libraryState.isFavorite(it) },
+        onPlay = onPlay,
+        onAddToAlbum = { },
+        onToggleFavorite = controller::toggleFavorite
+    )
 }
 
 @Composable
@@ -609,8 +718,10 @@ private fun SectionTitle(text: String) {
 private fun TrackList(
     tracks: List<Track>,
     albumName: String,
+    isFavorite: (Track) -> Boolean,
     onPlay: (Track) -> Unit,
-    onAddToAlbum: (Track) -> Unit
+    onAddToAlbum: (Track) -> Unit,
+    onToggleFavorite: (Track) -> Unit
 ) {
     if (tracks.isEmpty()) {
         Text("No hay pistas", color = Color(0xFF9FB2C8))
@@ -619,7 +730,14 @@ private fun TrackList(
 
     LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         items(tracks, key = { it.id }) { track ->
-            TrackRow(track = track, albumName = albumName, onPlay = onPlay, onAddToAlbum = onAddToAlbum)
+            TrackRow(
+                track = track,
+                albumName = albumName,
+                isFavorite = isFavorite(track),
+                onPlay = onPlay,
+                onAddToAlbum = onAddToAlbum,
+                onToggleFavorite = { onToggleFavorite(track) }
+            )
         }
         item { Spacer(modifier = Modifier.height(80.dp)) }
     }
@@ -629,8 +747,10 @@ private fun TrackList(
 private fun TrackRow(
     track: Track,
     albumName: String,
+    isFavorite: Boolean = false,
     onPlay: (Track) -> Unit,
     onAddToAlbum: (Track) -> Unit,
+    onToggleFavorite: () -> Unit,
     addLabel: String = "Agregar",
     extraActionLabel: String? = null,
     onExtraAction: (() -> Unit)? = null,
@@ -669,6 +789,14 @@ private fun TrackRow(
                 }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                // Botón de favorito (corazón)
+                IconButton(onClick = onToggleFavorite) {
+                    Text(
+                        text = if (isFavorite) "❤️" else "🤍",
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                }
+                
                 if (onSaveToLibrary != null) {
                     Button(
                         onClick = { onSaveToLibrary(track) },
@@ -765,6 +893,7 @@ private fun BottomBar(
     onPrevious: () -> Unit,
     onNext: () -> Unit,
     onSeek: (Float) -> Unit,
+    onExpand: () -> Unit,
     modifier: Modifier
 ) {
     val now = playerState.currentTrack
@@ -774,6 +903,7 @@ private fun BottomBar(
             .fillMaxWidth()
             .height(BottomBarHeight + 20.dp)
             .background(Color(0xFF0B1016))
+            .clickable(onClick = onExpand)
             .padding(horizontal = 16.dp, vertical = 8.dp)
     ) {
         // Barra de progreso con tiempos
@@ -868,9 +998,8 @@ private fun BottomBar(
                 // Botón Play/Pausa (más grande y destacado)
                 androidx.compose.material3.FloatingActionButton(
                     onClick = onToggle,
-                    enabled = now != null,
-                    containerColor = Color.White,
-                    contentColor = Color.Black,
+                    containerColor = if (now != null) Color.White else Color(0xFF5E5E5E),
+                    contentColor = if (now != null) Color.Black else Color(0xFF8E8E8E),
                     modifier = Modifier.size(56.dp)
                 ) {
                     Text(

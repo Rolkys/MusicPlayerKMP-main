@@ -1,21 +1,26 @@
 ﻿package music.controller
 
+import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import music.lyrics.LyricsResult
+import music.lyrics.LyricsService
 import music.model.Album
 import music.model.Playlist
 import music.model.PlayerState
+import music.model.RepeatMode
 import music.model.Track
 import music.model.TrackOrigin
+import music.platform.createSettingsStorage
 import music.player.AudioPlayer
 import music.source.LocalMusicSource
 import music.spotify.DeezerClient
 import music.spotify.createSpotifyHttpClient
-
 
 data class LibraryUiState(
     val isLoading: Boolean = false,
@@ -32,16 +37,22 @@ data class LibraryUiState(
     val selectedPlaylist: String? = null,
     val playCounts: Map<String, Int> = emptyMap(),
     val message: String? = null,
-    val musicFolders: List<String> = emptyList() // Carpetas de música personalizadas
+    val musicFolders: List<String> = emptyList(), // Carpetas de música personalizadas
+    val favoriteTrackIds: Set<String> = emptySet() // IDs de canciones favoritas
 ) {
     val allTracks: List<Track>
         get() = remoteTracks + localTracks + savedTracks
+    
+    val favoriteTracks: List<Track>
+        get() = allTracks.filter { it.id in favoriteTrackIds }
 
     val selectedAlbumTracks: List<Track>
         get() = albums.firstOrNull { it.name == selectedAlbum }?.tracks.orEmpty()
 
     val selectedPlaylistTracks: List<Track>
         get() = playlists.firstOrNull { it.name == selectedPlaylist }?.tracks.orEmpty()
+    
+    fun isFavorite(track: Track): Boolean = track.id in favoriteTrackIds
 }
 
 class MusicController(
@@ -66,20 +77,135 @@ class MusicController(
     val playerState: StateFlow<PlayerState> = audioPlayer.state
 
     private var deezerClient: DeezerClient? = null
+    private val lyricsService = LyricsService()
+    
+    // Estado para letras de la canción actual
+    private val _currentLyrics = MutableStateFlow<LyricsResult?>(null)
+    val currentLyrics: StateFlow<LyricsResult?> = _currentLyrics.asStateFlow()
     
     // Cola de reproducción para navegación previous/next
     private var playbackQueue: List<Track> = emptyList()
     private var currentQueueIndex: Int = -1
     private var isShuffleOn: Boolean = false
     private var repeatMode: RepeatMode = RepeatMode.OFF
+    
+    // Estado observable de la cola
+    private val _playbackQueueState = MutableStateFlow(PlaybackQueueState())
+    val playbackQueueState: StateFlow<PlaybackQueueState> = _playbackQueueState.asStateFlow()
+    
+    data class PlaybackQueueState(
+        val queue: List<Track> = emptyList(),
+        val currentIndex: Int = -1,
+        val isShuffleOn: Boolean = false,
+        val repeatMode: RepeatMode = RepeatMode.OFF
+    )
+    
+    /**
+     * Actualizar el estado de la cola
+     */
+    private fun updateQueueState() {
+        _playbackQueueState.value = PlaybackQueueState(
+            queue = playbackQueue,
+            currentIndex = currentQueueIndex,
+            isShuffleOn = isShuffleOn,
+            repeatMode = repeatMode
+        )
+    }
+    
+    /**
+     * Eliminar una canción de la cola
+     */
+    fun removeFromQueue(index: Int) {
+        if (index < 0 || index >= playbackQueue.size) return
+        
+        val newQueue = playbackQueue.toMutableList()
+        newQueue.removeAt(index)
+        
+        // Ajustar el índice actual si es necesario
+        if (index < currentQueueIndex) {
+            currentQueueIndex--
+        } else if (index == currentQueueIndex) {
+            // Si eliminamos la canción actual, pasamos a la siguiente
+            if (currentQueueIndex >= newQueue.size) {
+                currentQueueIndex = 0
+            }
+        }
+        
+        playbackQueue = newQueue
+        updateQueueState()
+    }
+    
+    /**
+     * Limpiar toda la cola
+     */
+    fun clearQueue() {
+        playbackQueue = emptyList()
+        currentQueueIndex = -1
+        updateQueueState()
+    }
+    
+    /**
+     * Saltar a una canción específica de la cola
+     */
+    fun playFromQueue(index: Int) {
+        if (index < 0 || index >= playbackQueue.size) return
+        
+        currentQueueIndex = index
+        val track = playbackQueue[index]
+        play(track)
+        updateQueueState()
+    }
+    
+    /**
+     * Alternar modo aleatorio
+     */
+    fun toggleShuffle() {
+        isShuffleOn = !isShuffleOn
+        updateQueueState()
+    }
+    
+    /**
+     * Alternar modo repetición
+     */
+    fun toggleRepeat() {
+        repeatMode = when (repeatMode) {
+            RepeatMode.OFF -> RepeatMode.ALL
+            RepeatMode.ALL -> RepeatMode.ONE
+            RepeatMode.ONE -> RepeatMode.OFF
+        }
+        updateQueueState()
+    }
 
     init {
         // Inicializar cliente Deezer (no requiere credenciales)
         deezerClient = DeezerClient(createSpotifyHttpClient())
+        
+        // Observar cambios de canción para cargar letras
+        scope.launch {
+            playerState.collect { state ->
+                if (state.currentTrack != null) {
+                    loadLyricsForTrack(state.currentTrack)
+                } else {
+                    _currentLyrics.value = null
+                }
+            }
+        }
+        
+        // Cargar favoritos guardados
+        loadFavorites()
     }
     
-    enum class RepeatMode {
-        OFF, ALL, ONE
+    /**
+     * Cargar letras para una canción específica
+     */
+    private suspend fun loadLyricsForTrack(track: Track) {
+        runCatching {
+            val lyrics = lyricsService.getLyrics(track.artist, track.title)
+            _currentLyrics.value = lyrics
+        }.onFailure { error ->
+            println("Error al cargar letras: ${error.message}")
+            _currentLyrics.value = null
+        }
     }
 
     // Deezer no requiere configuración de credenciales.
@@ -198,6 +324,54 @@ class MusicController(
                 }
             }
         }
+    }
+    
+    /**
+     * Alternar estado de favorito de una canción
+     */
+    fun toggleFavorite(track: Track) {
+        val currentFavorites = _libraryState.value.favoriteTrackIds.toMutableSet()
+        val isNowFavorite = if (track.id in currentFavorites) {
+            currentFavorites.remove(track.id)
+            false
+        } else {
+            currentFavorites.add(track.id)
+            true
+        }
+        
+        _libraryState.value = _libraryState.value.copy(
+            favoriteTrackIds = currentFavorites,
+            message = if (isNowFavorite) "❤️ Añadido a favoritos" else "💔 Eliminado de favoritos"
+        )
+        
+        // Persistir favoritos
+        saveFavorites(currentFavorites)
+    }
+    
+    /**
+     * Verificar si una canción es favorita
+     */
+    fun isFavorite(track: Track): Boolean {
+        return track.id in _libraryState.value.favoriteTrackIds
+    }
+    
+    /**
+     * Cargar favoritos guardados
+     */
+    fun loadFavorites() {
+        val settings = createSettingsStorage()
+        val saved = settings.loadFavorites()
+        if (saved.isNotEmpty()) {
+            _libraryState.value = _libraryState.value.copy(favoriteTrackIds = saved.toSet())
+        }
+    }
+    
+    /**
+     * Guardar favoritos en persistencia
+     */
+    private fun saveFavorites(favorites: Set<String>) {
+        val settings = createSettingsStorage()
+        settings.saveFavorites(favorites.toList())
     }
 
     fun addLocalFile(pathOrUri: String) {
@@ -549,19 +723,7 @@ class MusicController(
         scope.launch {
             audioPlayer.play(track)
         }
-        updatePlaybackState()
-    }
-    
-    fun playFromQueue(index: Int) {
-        if (index in playbackQueue.indices) {
-            currentQueueIndex = index
-            val track = playbackQueue[index]
-            incrementPlayCount(track)
-            scope.launch {
-                audioPlayer.play(track)
-            }
-            updatePlaybackState()
-        }
+        updateQueueState()
     }
     
     fun previous() {
@@ -592,45 +754,6 @@ class MusicController(
         audioPlayer.seekTo(position.coerceIn(0f, 1f))
     }
     
-    fun toggleShuffle() {
-        isShuffleOn = !isShuffleOn
-        if (isShuffleOn && playbackQueue.isNotEmpty()) {
-            // Barajar la cola manteniendo la canción actual en primera posición
-            val currentTrack = playbackQueue.getOrNull(currentQueueIndex)
-            val shuffled = playbackQueue.shuffled().toMutableList()
-            if (currentTrack != null) {
-                shuffled.remove(currentTrack)
-                shuffled.add(0, currentTrack)
-                currentQueueIndex = 0
-            }
-            playbackQueue = shuffled
-        } else {
-            // Restaurar orden original (usar todas las tracks)
-            playbackQueue = _libraryState.value.allTracks
-            val currentTrack = playerState.value.currentTrack
-            currentQueueIndex = playbackQueue.indexOfFirst { it.id == currentTrack?.id }.coerceAtLeast(0)
-        }
-        updatePlaybackState()
-    }
-    
-    fun toggleRepeat() {
-        repeatMode = when (repeatMode) {
-            RepeatMode.OFF -> RepeatMode.ALL
-            RepeatMode.ALL -> RepeatMode.ONE
-            RepeatMode.ONE -> RepeatMode.OFF
-        }
-        updatePlaybackState()
-    }
-    
-    private fun updatePlaybackState() {
-        // Actualizar hasPrevious y hasNext en el estado del player
-        val hasPrev = currentQueueIndex > 0 || repeatMode == RepeatMode.ALL
-        val hasNext = currentQueueIndex < playbackQueue.size - 1 || repeatMode == RepeatMode.ALL || repeatMode == RepeatMode.ONE
-        
-        // Nota: esto se manejaría mejor con un estado dedicado en PlayerState
-        // Por ahora solo actualizamos la lógica interna
-    }
-
     fun pause() {
         scope.launch {
             audioPlayer.pause()

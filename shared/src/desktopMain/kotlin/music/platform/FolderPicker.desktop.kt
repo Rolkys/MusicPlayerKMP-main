@@ -37,9 +37,9 @@ actual fun createSettingsStorage(): SettingsStorage = DesktopSettingsStorage()
 class DesktopSettingsStorage : SettingsStorage {
     private val prefs = Preferences.userNodeForPackage(DesktopSettingsStorage::class.java)
     private val KEY_FOLDERS = "music_folders"
+    private val KEY_FAVORITES = "favorite_tracks"
     
     override fun saveMusicFolders(folders: List<String>) {
-        // Guardar como string separado por comas (simple pero efectivo)
         prefs.put(KEY_FOLDERS, folders.joinToString("|"))
         prefs.flush()
     }
@@ -50,8 +50,20 @@ class DesktopSettingsStorage : SettingsStorage {
         return saved.split("|").filter { it.isNotBlank() && File(it).exists() }
     }
     
+    override fun saveFavorites(favorites: List<String>) {
+        prefs.put(KEY_FAVORITES, favorites.joinToString("|"))
+        prefs.flush()
+    }
+    
+    override fun loadFavorites(): List<String> {
+        val saved = prefs.get(KEY_FAVORITES, "") ?: return emptyList()
+        if (saved.isBlank()) return emptyList()
+        return saved.split("|").filter { it.isNotBlank() }
+    }
+    
     override fun clear() {
         prefs.remove(KEY_FOLDERS)
+        prefs.remove(KEY_FAVORITES)
         prefs.flush()
     }
 }

@@ -86,6 +86,7 @@ class AndroidSettingsStorage private constructor(context: Context) : SettingsSto
     
     private val prefs = context.getSharedPreferences("music_player_settings", Context.MODE_PRIVATE)
     private val KEY_FOLDERS = "music_folders"
+    private val KEY_FAVORITES = "favorite_tracks"
     
     override fun saveMusicFolders(folders: List<String>) {
         prefs.edit().putStringSet(KEY_FOLDERS, folders.toSet()).apply()
@@ -96,8 +97,17 @@ class AndroidSettingsStorage private constructor(context: Context) : SettingsSto
         return saved.toList()
     }
     
+    override fun saveFavorites(favorites: List<String>) {
+        prefs.edit().putStringSet(KEY_FAVORITES, favorites.toSet()).apply()
+    }
+    
+    override fun loadFavorites(): List<String> {
+        val saved = prefs.getStringSet(KEY_FAVORITES, emptySet()) ?: return emptyList()
+        return saved.toList()
+    }
+    
     override fun clear() {
-        prefs.edit().remove(KEY_FOLDERS).apply()
+        prefs.edit().remove(KEY_FOLDERS).remove(KEY_FAVORITES).apply()
     }
 }
 

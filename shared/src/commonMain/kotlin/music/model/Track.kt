@@ -5,6 +5,12 @@ enum class TrackOrigin {
     REMOTE
 }
 
+enum class RepeatMode {
+    OFF,
+    ALL,
+    ONE
+}
+
 data class Track(
     val id: String,
     val title: String,

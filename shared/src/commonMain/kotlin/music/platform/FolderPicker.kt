@@ -12,6 +12,8 @@ expect fun pickMusicFolder(): String?
 interface SettingsStorage {
     fun saveMusicFolders(folders: List<String>)
     fun loadMusicFolders(): List<String>
+    fun saveFavorites(favorites: List<String>)
+    fun loadFavorites(): List<String>
     fun clear()
 }
 
